@@ -24,10 +24,13 @@ def generuj_embed_tabeli():
     for uid in user_ids:
         plusy = int(r.get(f"{uid}:plusy") or 0)
         minusy = int(r.get(f"{uid}:minusy") or 0)
+        # Zabezpieczenie przed ujemnymi wartościami liczników w bazie
+        if plusy < 0: plusy = 0
+        if minusy < 0: minusy = 0
         bilans = plusy - minusy
         wyniki.append((uid, plusy, minusy, bilans))
             
-    # Poprawne sortowanie po bilansie (indeks 3 w krotce)
+    # Sortowanie po bilansie (indeks 3 w krotce)
     wyniki.sort(key=lambda x: x[3], reverse=True)
     
     embed = discord.Embed(title="🏆 TABELA PUNKTACJI GRACZY 🏆", color=0x00ff00)
@@ -82,12 +85,12 @@ async def on_ready():
     if not inicjalizacja_tabeli.is_running():
         inicjalizacja_tabeli.start()
 
+# REAKCJA NA NOWĄ WIADOMOŚĆ (Dodawanie punktów)
 @client.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    # ID kanału do zliczania punktów wpisane na sztywno
     kanal_punktow_id = "1530914459135119445"
     if str(message.channel.id) != kanal_punktow_id:
         return
@@ -101,8 +104,6 @@ async def on_message(message):
 
         zaktualizowano = False
         for uzytkownik in message.mentions:
-            # USUNIĘTO BLOKADĘ: Możesz nadawać punkty samemu sobie
-            
             if liczba_plusow > 0:
                 r.incrby(f"{uzytkownik.id}:plusy", liczba_plusow)
                 zaktualizowano = True
@@ -122,5 +123,46 @@ async def on_message(message):
                     print("Tabela zaktualizowana po przyznaniu punktów.")
             except Exception as e:
                 print(f"Błąd szybkiej aktualizacji: {e}")
+
+# REAKCJA NA USUNIĘCIE WIADOMOŚCI (Cofanie punktów)
+@client.event
+async def on_message_delete(message):
+    if message.author.bot:
+        return
+
+    kanal_punktow_id = "1530914459135119445"
+    if str(message.channel.id) != kanal_punktow_id:
+        return
+
+    if message.mentions:
+        liczba_plusow = message.content.count("+")
+        liczba_minusow = message.content.count("-")
+        
+        if liczba_plusow == 0 and liczba_minusow == 0:
+            return
+
+        zaktualizowano = False
+        for uzytkownik in message.mentions:
+            if liczba_plusow > 0:
+                # Zmniejszamy liczbę plusów w bazie danych
+                r.decrby(f"{uzytkownik.id}:plusy", liczba_plusow)
+                zaktualizowano = True
+            
+            if liczba_minusow > 0:
+                # Zmniejszamy liczbę minusów w bazie danych
+                r.decrby(f"{uzytkownik.id}:minusy", liczba_minusow)
+                zaktualizowano = True
+            
+        if zaktualizowano:
+            try:
+                tabela_chan_id = "1543677152589910107"
+                kanal = await client.fetch_channel(int(tabela_chan_id))
+                msg_id = r.get("config:tabela_message_id")
+                if kanal and msg_id:
+                    wiadomosc = await kanal.fetch_message(int(msg_id))
+                    await wiadomosc.edit(embed=generuj_embed_tabeli())
+                    print("Tabela zaktualizowana po usunięciu wiadomości.")
+            except Exception as e:
+                print(f"Błąd szybkiej aktualizacji po usunięciu: {e}")
 
 client.run(os.getenv("DISCORD_TOKEN"))
