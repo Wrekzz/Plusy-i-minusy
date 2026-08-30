@@ -96,14 +96,12 @@ async def on_message(message):
         liczba_plusow = message.content.count("+")
         liczba_minusow = message.content.count("-")
         
-        # POPRAWIONE: Zmiana integer_plusow na liczba_plusow
         if liczba_plusow == 0 and liczba_minusow == 0:
             return
 
         zaktualizowano = False
         for uzytkownik in message.mentions:
-            if uzytkownik == message.author:
-                continue
+            # USUNIĘTO BLOKADĘ: Możesz nadawać punkty samemu sobie
             
             if liczba_plusow > 0:
                 r.incrby(f"{uzytkownik.id}:plusy", liczba_plusow)
