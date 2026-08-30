@@ -46,13 +46,10 @@ def generuj_embed_tabeli():
 # Bezpieczne zadanie startowe, które czeka na połączenie i generuje tabelę
 @tasks.loop(count=1)
 async def inicjalizacja_tabeli():
-    # ID kanału tabeli wpisane na sztywno jako tekst
     tabela_chan_id = "1543677152589910107"
 
     try:
-        # Czekamy, aż bot pobierze pełną listę kanałów z serwera
         await client.wait_until_ready()
-        
         kanal = await client.fetch_channel(int(tabela_chan_id))
         if not kanal:
             print("Nie można odnaleźć wskazanego kanału dla tabeli!")
@@ -63,7 +60,6 @@ async def inicjalizacja_tabeli():
 
         if msg_id:
             try:
-                # Jeśli tabela już wisi na kanale, po prostu ją edytujemy
                 wiadomosc = await kanal.fetch_message(int(msg_id))
                 await wiadomosc.edit(embed=embed)
                 print("Tabela została pomyślnie zaktualizowana.")
@@ -71,20 +67,18 @@ async def inicjalizacja_tabeli():
             except Exception:
                 print("Stara tabela nie została znaleziona w kanale, generuję nową...")
         
-        # Generowanie nowej tabeli na kanale
         wyslana_msg = await kanal.send(embed=embed)
         r.set("config:tabela_message_id", str(wyslana_msg.id))
         print("Tabela została wygenerowana pomyślnie na Discordzie!")
 
     except discord.Forbidden:
-        print("BŁĄD: Bot nie ma uprawnień do tego kanału! Dodaj mu rolę na kanale na Discordzie.")
+        print("BŁĄD: Bot nie ma uprawnień do tego kanału!")
     except Exception as e:
         print(f"Błąd podczas startowej obsługi tabeli: {e}")
 
 @client.event
 async def on_ready():
     print(f"Zalogowano pomyślnie jako {client.user}")
-    # Uruchomienie zadania w tle, jeśli jeszcze nie działa
     if not inicjalizacja_tabeli.is_running():
         inicjalizacja_tabeli.start()
 
@@ -102,7 +96,8 @@ async def on_message(message):
         liczba_plusow = message.content.count("+")
         liczba_minusow = message.content.count("-")
         
-        if integer_plusow == 0 and liczba_minusow == 0:
+        # POPRAWIONE: Zmiana integer_plusow na liczba_plusow
+        if liczba_plusow == 0 and liczba_minusow == 0:
             return
 
         zaktualizowano = False
@@ -119,7 +114,6 @@ async def on_message(message):
                 zaktualizowano = True
             
         if zaktualizowano:
-            # Szybkie odświeżenie istniejącej tabeli po wysłaniu punktu
             try:
                 tabela_chan_id = "1543677152589910107"
                 kanal = await client.fetch_channel(int(tabela_chan_id))
