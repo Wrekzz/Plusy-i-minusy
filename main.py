@@ -25,14 +25,13 @@ def generuj_embed_tabeli():
         plusy = int(r.get(f"{uid}:plusy") or 0)
         minusy = int(r.get(f"{uid}:minusy") or 0)
         
-        # Zabezpieczenie przed ujemnymi wartościami w bazie danych
         if plusy < 0: plusy = 0
         if minusy < 0: minusy = 0
         
         bilans = plusy - minusy
         wyniki.append((uid, plusy, minusy, bilans))
             
-    # Sortowanie po bilansie (indeks 3 w krotce)
+    # Sortowanie po bilansie
     wyniki.sort(key=lambda x: x[3], reverse=True)
     
     embed = discord.Embed(title="🏆 TABELA PUNKTACJI GRACZY 🏆", color=0x00ff00)
@@ -48,16 +47,13 @@ def generuj_embed_tabeli():
     embed.description = opis
     return embed
 
-# Bezpieczne zadanie startowe, które czeka na połączenie i generuje tabelę
 @tasks.loop(count=1)
 async def inicjalizacja_tabeli():
     tabela_chan_id = "1543677152589910107"
-
     try:
         await client.wait_until_ready()
         kanal = await client.fetch_channel(int(tabela_chan_id))
         if not kanal:
-            print("Nie można odnaleźć wskazanego kanału dla tabeli!")
             return
 
         msg_id = r.get("config:tabela_message_id")
@@ -67,7 +63,6 @@ async def inicjalizacja_tabeli():
             try:
                 wiadomosc = await kanal.fetch_message(int(msg_id))
                 await wiadomosc.edit(embed=embed)
-                print("Tabela została pomyślnie zaktualizowana.")
                 return
             except Exception:
                 print("Stara tabela nie została znaleziona w kanale, generuję nową...")
@@ -75,9 +70,6 @@ async def inicjalizacja_tabeli():
         wyslana_msg = await kanal.send(embed=embed)
         r.set("config:tabela_message_id", str(wyslana_msg.id))
         print("Tabela została wygenerowana pomyślnie na Discordzie!")
-
-    except discord.Forbidden:
-        print("BŁĄD: Bot nie ma uprawnień do tego kanału!")
     except Exception as e:
         print(f"Błąd podczas startowej obsługi tabeli: {e}")
 
@@ -87,13 +79,12 @@ async def on_ready():
     if not inicjalizacja_tabeli.is_running():
         inicjalizacja_tabeli.start()
 
-# REAKCJA NA NOWĄ WIADOMOŚĆ (Dodawanie + i kasowanie -)
+# REAKCJA NA NOWĄ WIADOMOŚĆ (Dodawanie i sprawdzanie globalnego warunku)
 @client.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    # ID kanału do zliczania punktów wpisane na sztywno
     kanal_punktow_id = "1530914459135119445"
     if str(message.channel.id) != kanal_punktow_id:
         return
@@ -109,25 +100,31 @@ async def on_message(message):
         for uzytkownik in message.mentions:
             uid = uzytkownik.id
             
-            # 1. Zliczanie plusów i warunek redukcji minusa
-            if liczba_plusow > 0:
-                # Bot nalicza normalnie wszystkie wpisane plusy
-                r.incrby(f"{uid}:plusy", liczba_plusow)
-                
-                # JEŚLI WPISANO MINIMUM 2 PLUSY (np. ++):
-                if liczba_plusow >= 2:
-                    obecne_minusy = int(r.get(f"{uid}:minusy") or 0)
-                    # Jeśli gracz posiada jakieś minusy, usuwamy dokładnie jeden z nich
-                    if obecne_minusy > 0:
-                        r.decrby(f"{uid}:minusy", 1)
-                        # Zapisujemy informację w pamięci wiadomości, żeby móc to cofnąć przy usunięciu wpisu
-                        r.set(f"msg:{message.id}:{uid}:zredukowano", "tak")
-                
-                zaktualizowano = True
-            
-            # 2. Zliczanie minusów
+            # Obsługa przyznawania minusów
             if liczba_minusow > 0:
                 r.incrby(f"{uid}:minusy", liczba_minusow)
+                zaktualizowano = True
+
+            # Obsługa przyznawania plusów
+            if liczba_plusow > 0:
+                # Dodajemy plusy po jednym w pętli, aby precyzyjnie sprawdzić każdy kolejny historyczny plus
+                skasowane_minusy_w_tej_wiadomosci = 0
+                for _ in range(liczba_plusow):
+                    # Zwiększamy liczbę plusów o 1 i pobieramy nowy stan licznika
+                    nowe_historyczne_plusy = r.incr(f"{uid}:plusy")
+                    
+                    # Jeśli ten konkretny plus jest parzysty (2, 4, 6, 8 itd.)
+                    if nowe_historyczne_plusy % 2 == 0:
+                        obecne_minusy = int(r.get(f"{uid}:minusy") or 0)
+                        if obecne_minusy > 0:
+                            # Kasujemy 1 minus z bazy danych
+                            r.decrby(f"{uid}:minusy", 1)
+                            skasowane_minusy_w_tej_wiadomosci += 1
+                
+                # Zapisujemy ile minusów bot usunął w TEJ konkretnej wiadomości (potrzebne do cofnięcia przy usunięciu wpisu)
+                if skasowane_minusy_w_tej_wiadomosci > 0:
+                    r.set(f"msg:{message.id}:{uid}:skasowane_minusy", str(skasowane_minusy_w_tej_wiadomosci))
+                
                 zaktualizowano = True
             
         if zaktualizowano:
@@ -138,11 +135,10 @@ async def on_message(message):
                 if kanal and msg_id:
                     wiadomosc = await kanal.fetch_message(int(msg_id))
                     await wiadomosc.edit(embed=generuj_embed_tabeli())
-                    print("Tabela zaktualizowana po przyznaniu punktów.")
             except Exception as e:
                 print(f"Błąd szybkiej aktualizacji: {e}")
 
-# REAKCJA NA USUNIĘCIE WIADOMOŚCI (Cofanie operacji)
+# REAKCJA NA USUNIĘCIE WIADOMOŚCI (Cofanie ze spójnością globalną)
 @client.event
 async def on_message_delete(message):
     if message.author.bot:
@@ -163,19 +159,20 @@ async def on_message_delete(message):
         for uzytkownik in message.mentions:
             uid = uzytkownik.id
             
-            if liczba_plusow > 0:
-                # Odejmij doliczone wcześniej plusy
-                r.decrby(f"{uid}:plusy", liczba_plusow)
-                
-                # Jeśli przy tej wiadomości bot skasował minusa, musimy go teraz przywrócić
-                if r.get(f"msg:{message.id}:{uid}:zredukowano") == "tak":
-                    r.incrby(f"{uid}:minusy", 1)
-                    r.delete(f"msg:{message.id}:{uid}:zredukowano")
-                    
-                zaktualizowano = True
-            
             if liczba_minusow > 0:
                 r.decrby(f"{uid}:minusy", liczba_minusow)
+                zaktualizowano = True
+
+            if liczba_plusow > 0:
+                # Odejmij doliczone plusy z tej wiadomości
+                r.decrby(f"{uid}:plusy", liczba_plusow)
+                
+                # Jeśli bot przy tej wiadomości skasował jakieś minusy, musimy je teraz oddać graczowi
+                skasowane = r.get(f"msg:{message.id}:{uid}:skasowane_minusy")
+                if skasowane:
+                    r.incrby(f"{uid}:minusy", int(skasowane))
+                    r.delete(f"msg:{message.id}:{uid}:skasowane_minusy")
+                    
                 zaktualizowano = True
             
         if zaktualizowano:
@@ -186,7 +183,6 @@ async def on_message_delete(message):
                 if kanal and msg_id:
                     wiadomosc = await kanal.fetch_message(int(msg_id))
                     await wiadomosc.edit(embed=generuj_embed_tabeli())
-                    print("Tabela zaktualizowana po usunięciu wiadomości.")
             except Exception as e:
                 print(f"Błąd szybkiej aktualizacji po usunięciu: {e}")
 
