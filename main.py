@@ -24,9 +24,11 @@ def generuj_embed_tabeli():
     for uid in user_ids:
         plusy = int(r.get(f"{uid}:plusy") or 0)
         minusy = int(r.get(f"{uid}:minusy") or 0)
-        # Zabezpieczenie przed ujemnymi wartościami liczników w bazie
+        
+        # Zabezpieczenie przed ujemnymi wartościami w bazie danych
         if plusy < 0: plusy = 0
         if minusy < 0: minusy = 0
+        
         bilans = plusy - minusy
         wyniki.append((uid, plusy, minusy, bilans))
             
@@ -85,12 +87,13 @@ async def on_ready():
     if not inicjalizacja_tabeli.is_running():
         inicjalizacja_tabeli.start()
 
-# REAKCJA NA NOWĄ WIADOMOŚĆ (Dodawanie punktów)
+# REAKCJA NA NOWĄ WIADOMOŚĆ (Dodawanie + i kasowanie -)
 @client.event
 async def on_message(message):
     if message.author.bot:
         return
 
+    # ID kanału do zliczania punktów wpisane na sztywno
     kanal_punktow_id = "1530914459135119445"
     if str(message.channel.id) != kanal_punktow_id:
         return
@@ -104,12 +107,27 @@ async def on_message(message):
 
         zaktualizowano = False
         for uzytkownik in message.mentions:
+            uid = uzytkownik.id
+            
+            # 1. Zliczanie plusów i warunek redukcji minusa
             if liczba_plusow > 0:
-                r.incrby(f"{uzytkownik.id}:plusy", liczba_plusow)
+                # Bot nalicza normalnie wszystkie wpisane plusy
+                r.incrby(f"{uid}:plusy", liczba_plusow)
+                
+                # JEŚLI WPISANO MINIMUM 2 PLUSY (np. ++):
+                if liczba_plusow >= 2:
+                    obecne_minusy = int(r.get(f"{uid}:minusy") or 0)
+                    # Jeśli gracz posiada jakieś minusy, usuwamy dokładnie jeden z nich
+                    if obecne_minusy > 0:
+                        r.decrby(f"{uid}:minusy", 1)
+                        # Zapisujemy informację w pamięci wiadomości, żeby móc to cofnąć przy usunięciu wpisu
+                        r.set(f"msg:{message.id}:{uid}:zredukowano", "tak")
+                
                 zaktualizowano = True
             
+            # 2. Zliczanie minusów
             if liczba_minusow > 0:
-                r.incrby(f"{uzytkownik.id}:minusy", liczba_minusow)
+                r.incrby(f"{uid}:minusy", liczba_minusow)
                 zaktualizowano = True
             
         if zaktualizowano:
@@ -124,7 +142,7 @@ async def on_message(message):
             except Exception as e:
                 print(f"Błąd szybkiej aktualizacji: {e}")
 
-# REAKCJA NA USUNIĘCIE WIADOMOŚCI (Cofanie punktów)
+# REAKCJA NA USUNIĘCIE WIADOMOŚCI (Cofanie operacji)
 @client.event
 async def on_message_delete(message):
     if message.author.bot:
@@ -143,14 +161,21 @@ async def on_message_delete(message):
 
         zaktualizowano = False
         for uzytkownik in message.mentions:
+            uid = uzytkownik.id
+            
             if liczba_plusow > 0:
-                # Zmniejszamy liczbę plusów w bazie danych
-                r.decrby(f"{uzytkownik.id}:plusy", liczba_plusow)
+                # Odejmij doliczone wcześniej plusy
+                r.decrby(f"{uid}:plusy", liczba_plusow)
+                
+                # Jeśli przy tej wiadomości bot skasował minusa, musimy go teraz przywrócić
+                if r.get(f"msg:{message.id}:{uid}:zredukowano") == "tak":
+                    r.incrby(f"{uid}:minusy", 1)
+                    r.delete(f"msg:{message.id}:{uid}:zredukowano")
+                    
                 zaktualizowano = True
             
             if liczba_minusow > 0:
-                # Zmniejszamy liczbę minusów w bazie danych
-                r.decrby(f"{uzytkownik.id}:minusy", liczba_minusow)
+                r.decrby(f"{uid}:minusy", liczba_minusow)
                 zaktualizowano = True
             
         if zaktualizowano:
