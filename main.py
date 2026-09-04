@@ -130,21 +130,17 @@ async def on_message(message):
         return
 
     if message.mentions:
-        # Rozbijamy tekst na bloki oddzielone wzmiankami użytkowników
         czesci_tekstu = re.split(r'<@!?\d+>', message.content)
         zaktualizowano = False
 
         for index, uzytkownik in enumerate(message.mentions):
             uid = uzytkownik.id
             
-            # Pobieramy fragment wiadomości znajdujący się przed tym konkretnym graczem
             fragment_przed = czesci_tekstu[index] if index < len(czesci_tekstu) else ""
             
             liczba_plusow = fragment_przed.count("+")
             liczba_minusow = fragment_przed.count("-")
             
-            # Jeśli przed graczem nie ma plusów/minusów (bo oznaczono ich ciągiem),
-            # szukamy punktów przypisanych do poprzedniego gracza w tej samej wiadomości
             if liczba_plusow == 0 and liczba_minusow == 0 and index > 0:
                 for i in range(index - 1, -1, -1):
                     poprzedni_fragment = czesci_tekstu[i]
@@ -167,7 +163,8 @@ async def on_message(message):
                 for _ in range(liczba_plusow):
                     nowe_historyczne_plusy = r.incr(f"{uid}:plusy")
                     
-                    if nowe_historyczne_plusy % 2 == 0:
+                    # ZMIANA: Teraz warunek sprawdza podzielność przez 3 (co trzeci plus kasuje minus)
+                    if nowe_historyczne_plusy % 3 == 0:
                         obecne_minusy = int(r.get(f"{uid}:minusy") or 0)
                         if obecne_minusy > 0:
                             r.decrby(f"{uid}:minusy", 1)
@@ -200,8 +197,6 @@ async def on_message_delete(message):
         return
 
     if message.mentions:
-        # Przy usuwaniu wiadomości stosujemy dokładnie tę samą logikę podziału
-        # tak, aby bot odjął dokładnie tyle punktów, ile przed chwilą przyznał
         czesci_tekstu = re.split(r'<@!?\d+>', message.content)
         zaktualizowano = False
 
@@ -212,7 +207,7 @@ async def on_message_delete(message):
             liczba_plusow = fragment_przed.count("+")
             liczba_minusow = fragment_przed.count("-")
             
-            if liczba_plusow == 0 and liczba_minusow == 0 and index > 0:
+            if integer_plusow == 0 and liczba_minusow == 0 and index > 0:
                 for i in range(index - 1, -1, -1):
                     poprzedni_fragment = czesci_tekstu[i]
                     p = poprzedni_fragment.count("+")
